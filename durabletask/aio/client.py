@@ -24,8 +24,7 @@ class AsyncTaskHubGrpcClient:
                  log_handler: Optional[logging.Handler] = None,
                  log_formatter: Optional[logging.Formatter] = None,
                  secure_channel: bool = False,
-                 interceptors: Optional[Sequence[AioClientInterceptor]] = None,
-                 default_version: Optional[str] = None):
+                 interceptors: Optional[Sequence[AioClientInterceptor]] = None):
 
         if interceptors is not None:
             interceptors = list(interceptors)
@@ -44,7 +43,6 @@ class AsyncTaskHubGrpcClient:
         self._channel = channel
         self._stub = stubs.TaskHubSidecarServiceStub(channel)
         self._logger = shared.get_logger("client", log_handler, log_formatter)
-        self.default_version = default_version
 
     async def aclose(self):
         await self._channel.close()
@@ -53,9 +51,7 @@ class AsyncTaskHubGrpcClient:
                                          input: Optional[TInput] = None,
                                          instance_id: Optional[str] = None,
                                          start_at: Optional[datetime] = None,
-                                         reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None,
-                                         tags: Optional[dict[str, str]] = None,
-                                         version: Optional[str] = None) -> str:
+                                         reuse_id_policy: Optional[pb.OrchestrationIdReusePolicy] = None) -> str:
 
         name = orchestrator if isinstance(orchestrator, str) else task.get_name(orchestrator)
 
@@ -64,9 +60,8 @@ class AsyncTaskHubGrpcClient:
             instanceId=instance_id if instance_id else uuid.uuid4().hex,
             input=wrappers_pb2.StringValue(value=shared.to_json(input)) if input is not None else None,
             scheduledStartTimestamp=helpers.new_timestamp(start_at) if start_at else None,
-            version=helpers.get_string_value(version if version else self.default_version),
+            version=helpers.get_string_value(None),
             orchestrationIdReusePolicy=reuse_id_policy,
-            tags=tags
         )
 
         self._logger.info(f"Starting new '{name}' instance with ID = '{req.instanceId}'.")
@@ -80,25 +75,30 @@ class AsyncTaskHubGrpcClient:
 
     async def wait_for_orchestration_start(self, instance_id: str, *,
                                            fetch_payloads: bool = False,
-                                           timeout: int = 60) -> Optional[OrchestrationState]:
+                                           timeout: int = 0) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
-            self._logger.info(f"Waiting up to {timeout}s for instance '{instance_id}' to start.")
-            res: pb.GetInstanceResponse = await self._stub.WaitForInstanceStart(req, timeout=timeout)
+            grpc_timeout = None if timeout == 0 else timeout
+            self._logger.info(
+                f"Waiting {'indefinitely' if timeout == 0 else f'up to {timeout}s'} for instance '{instance_id}' to start.")
+            res: pb.GetInstanceResponse = await self._stub.WaitForInstanceStart(req, timeout=grpc_timeout)
             return new_orchestration_state(req.instanceId, res)
         except grpc.RpcError as rpc_error:
             if rpc_error.code() == grpc.StatusCode.DEADLINE_EXCEEDED:  # type: ignore
+                # Replace gRPC error with the built-in TimeoutError
                 raise TimeoutError("Timed-out waiting for the orchestration to start")
             else:
                 raise
 
     async def wait_for_orchestration_completion(self, instance_id: str, *,
                                                 fetch_payloads: bool = True,
-                                                timeout: int = 60) -> Optional[OrchestrationState]:
+                                                timeout: int = 0) -> Optional[OrchestrationState]:
         req = pb.GetInstanceRequest(instanceId=instance_id, getInputsAndOutputs=fetch_payloads)
         try:
-            self._logger.info(f"Waiting {timeout}s for instance '{instance_id}' to complete.")
-            res: pb.GetInstanceResponse = await self._stub.WaitForInstanceCompletion(req, timeout=timeout)
+            grpc_timeout = None if timeout == 0 else timeout
+            self._logger.info(
+                f"Waiting {'indefinitely' if timeout == 0 else f'up to {timeout}s'} for instance '{instance_id}' to complete.")
+            res: pb.GetInstanceResponse = await self._stub.WaitForInstanceCompletion(req, timeout=grpc_timeout)
             state = new_orchestration_state(req.instanceId, res)
             if not state:
                 return None
@@ -114,6 +114,7 @@ class AsyncTaskHubGrpcClient:
             return state
         except grpc.RpcError as rpc_error:
             if rpc_error.code() == grpc.StatusCode.DEADLINE_EXCEEDED:  # type: ignore
+                # Replace gRPC error with the built-in TimeoutError
                 raise TimeoutError("Timed-out waiting for the orchestration to complete")
             else:
                 raise

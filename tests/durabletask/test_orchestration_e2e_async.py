@@ -1,7 +1,6 @@
 import asyncio
 import json
 import threading
-import time
 from datetime import timedelta
 
 import pytest
@@ -16,13 +15,14 @@ from durabletask import task, worker
 #       durabletask-go --port 4001
 pytestmark = [pytest.mark.e2e, pytest.mark.anyio]
 
+
 @pytest.fixture
 def anyio_backend():
     return 'asyncio'
 
 
 async def test_empty_orchestration():
- 
+
     invoked = False
 
     def empty_orchestrator(ctx: task.OrchestrationContext, _):
@@ -35,7 +35,7 @@ async def test_empty_orchestration():
         w.start()
 
         c = AsyncTaskHubGrpcClient()
-        id = await c.schedule_new_orchestration(empty_orchestrator, tags={'Tagged': 'true'})
+        id = await c.schedule_new_orchestration(empty_orchestrator)
         state = await c.wait_for_orchestration_completion(id, timeout=30)
         await c.aclose()
 
@@ -59,7 +59,7 @@ async def test_activity_sequence():
         numbers = [start_val]
         current = start_val
         for _ in range(10):
-            current = yield ctx.call_activity(plus_one, input=current, tags={'Activity': 'PlusOne'})
+            current = yield ctx.call_activity(plus_one, input=current)
             numbers.append(current)
         return numbers
 
@@ -70,7 +70,7 @@ async def test_activity_sequence():
         w.start()
 
         client = AsyncTaskHubGrpcClient()
-        id = await client.schedule_new_orchestration(sequence, input=1, tags={'Orchestration': 'Sequence'})
+        id = await client.schedule_new_orchestration(sequence, input=1)
         state = await client.wait_for_orchestration_completion(id, timeout=30)
         await client.aclose()
 
@@ -485,5 +485,3 @@ async def test_custom_status():
     assert state.serialized_input is None
     assert state.serialized_output is None
     assert state.serialized_custom_status == "\"foobaz\""
-
-

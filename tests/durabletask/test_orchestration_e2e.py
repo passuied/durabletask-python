@@ -316,7 +316,6 @@ def test_terminate_recursive():
             output = "Recursive termination = {recurse}"
             task_hub_client.terminate_orchestration(instance_id, output=output, recursive=recurse)
 
-
             metadata = task_hub_client.wait_for_orchestration_completion(instance_id, timeout=30)
 
             assert metadata is not None
